@@ -16,7 +16,7 @@ module.exports = {
     name: 'answerForCard',
     message: null, //dynamically assign
   },
-  cardQuestion: {
+  createWhichCard: {
     type: 'list',
     name: 'createWhichCard',
     message: 'Which card do you want to create?',

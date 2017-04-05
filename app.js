@@ -2,10 +2,8 @@ const Rx = require('rx'); // inquirer support only rxjs 4.x
 const inquirer = require('inquirer');
 const BasicCard = require('./basic-card');
 const ClozeCard = require('./cloze-card');
-const question = require('./questions')
-
-//inquirer bottom bar
-// const bottomBar = new inquirer.ui.BottomBar();
+const question = require('./questions');
+const helper = require('./helper');
 
 // question stream
 const questions$ = new Rx.BehaviorSubject(question.whatDoYouWant);
@@ -20,37 +18,15 @@ const selectedCard$ = new Rx.Subject();
 const answerForCardProblem$ = new Rx.Subject();
 const displayCards$ = new Rx.Subject();
 
-
-//옵저버블은 인풋을 컨트롤 하는게 아니다??? 에그헤드 비디오 보기.
-
-const convertToBasicCardChoices = basicCard => {
-  return {
-    name: "Basic Card: " + basicCard.front,
-    value: basicCard
-  };
-};
-const convertToClozeCardChoices = clozeCard => {
-  return {
-    name: "Cloze Card: " + clozeCard.partial,
-    value: clozeCard
-  };
-};
-
-const makeCardChoiceQuestion = cardChoices => ({
-  type: 'list',
-  name: 'selectCard',
-  message: 'Choose a card to solve.',
-  choices: cardChoices
-});
-
+//subscribe answer
 answers$.subscribe(ans => {
   switch (ans.name) {
     case 'action': {
-      if (ans.answer === 'create') return questions$.onNext(question.cardQuestion); //ask which card do you want to create
+      if (ans.answer === 'create') return questions$.onNext(question.createWhichCard); //ask which card do you want to create
       
       // user selected display
       // we convert both cards streams to observable<Array<question>> and then push this to the question stream
-      else return displayCards$.onNext();
+      else return displayCards$.onNext("WOW!");
     }
 
     //answer for 'select card to answer'
@@ -66,7 +42,7 @@ answers$.subscribe(ans => {
 
     //answer for a basic/cloze card front/partial text(eg. "who is the first president of USA?" or " ... is the first president of USA.")
     case 'answerForCard': {
-      answerForCardProblem$$(ans.answer); //wait until answer check
+      answerForCardProblem$.onNext(ans.answer); //wait until answer check
     }
 
     //answer for a "which card do you want to create?"
@@ -111,18 +87,44 @@ answers$.subscribe(ans => {
   }
 });
 
-//This stream keeps all basic cards history
+//created basic card stream
 const createBasicCards$ = Rx.Observable
   .zip(basicFrontText$, basicBackText$)
-  // .startWith(['Who was the first president of the United States?', 'George Washington'])
-  .scan((cards, [front, back]) => [...cards, new BasicCard(front, back)], []);
-
-//This stream keeps all cloze cards history
+  .map(([front, back]) => new BasicCard(front, back));
+  
+//created cloze card stream
 const createClozeCards$ = Rx.Observable
   .zip(clozeFullText$, clozeClozeText$)
-  // .startWith(['Jupiter is the biggest planet.', 'Jupiter'])
-  .scan((cards, [full, cloze]) => [...cards, new ClozeCard(full, cloze)], [])
+  .do(_ => console.log("WHAT THE HECK"))
+  .map(([full, cloze]) => new ClozeCard(full, cloze));
+
+//created cards stream
+const createdCards$ = Rx.Observable.merge(createBasicCards$, createClozeCards$)
+  .scan((createdCards, card) => [...createdCards, card], [])
   .share();
+
+//initial two cards
+const initialCards$ = Rx.Observable.of([
+  new BasicCard('Who was the first president of the United States?', 'George Washington'),
+  new ClozeCard('Jupiter is the biggest planet.', 'Jupiter')
+]);
+
+// initial cards + created cards
+const totalCards$ = createdCards$
+  .startWith([
+    new BasicCard('Who was the first president of the United States?', 'George Washington'),
+    new ClozeCard('Jupiter is the biggest planet.', 'Jupiter')
+  ]);
+
+// cards display to user
+const showCardList$ = Rx.Observable.zip(totalCards$, displayCards$)
+  .map(([cards, _]) => {
+    return cards.map(card => {
+      if(card instanceof BasicCard) return helper.convertToBasicCardChoices(card);
+      else return helper.convertToClozeCardChoices(card);
+    })
+  })
+  .map(helper.makeCardChoiceQuestion);
 
 //This stream is for checking user's answer for basic/cloze card front/partial text question
 const checkAnswer$ = Rx.Observable
@@ -130,43 +132,20 @@ const checkAnswer$ = Rx.Observable
   .map(([card, answer]) => {
     if (card instanceof BasicCard) return card.back.toLowerCase() === answer.toLowerCase();
     else return card.cloze = answer;
-  })
-  .share();
-  
+  });
 
-createBasicCards$.subscribe(basicCards => {
-  // questions$.onNext(question.whatDoYouWant);
+//Subscribe
+createdCards$.subscribe(() => {
+  questions$.onNext(question.whatDoYouWant);
 });
 
-createClozeCards$.subscribe(clozeCards => {
-  // questions$.onNext(question.whatDoYouWant);
+showCardList$.subscribe(q => {
+  console.log("Hello")
+  questions$.onNext(q);
 });
 
 checkAnswer$.subscribe(isCorrect => {
-    // if(isCorrect) bottomBar.log.write("Correct!!!!!");
-    // else bottomBar.log.write("wrong!!!!!");
+    if(isCorrect) console.log(" - Correct!!!!!");
+    else console.log(" - wrong!!!!!");
     questions$.onNext(question.whatDoYouWant);
-  });
-
-cards$ = Rx.Observable.merge(createBasicCards$, createClozeCards$) //TODO: to one observable
-initialCards$ = Rx.Observable.of(
-  convertToBasicCardChoices(new BasicCard('Who was the first president of the United States?', 'George Washington')),
-  convertToClozeCardChoices(new ClozeCard('Jupiter is the biggest planet.', 'Jupiter'))
-);
-
-displayCards$
-  .flatMapLatest(() => 
-    Rx.Observable.merge( //convert each card to inquirer choice object and concatenate both cards choices stream
-          cards$,
-          initialCards$
-        )
-        // .do(_ => console.log(_))
-        .take(1)
-        .toArray() //Creates a list from cards choices sequence
-        // .do(_ => console.log(_))
-        .map(makeCardChoiceQuestion) // convert cardChoices to card select question
-  )
-  .subscribe(q => {
-    console.log(q);
-    // questions$.onNext(q);
-  }); //ask "Choose a card to solve."
+});
