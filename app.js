@@ -5,11 +5,17 @@ const ClozeCard = require('./cloze-card');
 const question = require('./questions');
 const helper = require('./helper');
 
+/**
+ * Observable
+ */
+
 // question stream
 const questions$ = new Rx.BehaviorSubject(question.whatDoYouWant); // behavior subject: include first question
 
 // user answer stream
 const answers$ = inquirer.prompt(questions$).ui.process;
+
+// event bus: not the best use of subject!
 const basicFrontText$ = new Rx.Subject();
 const basicBackText$ = new Rx.Subject();
 const clozeFullText$ = new Rx.Subject();
@@ -18,13 +24,65 @@ const selectedCard$ = new Rx.Subject();
 const answerForCardProblem$ = new Rx.Subject();
 const displayCards$ = new Rx.Subject();
 
-//subscribe answer
+//created basic card stream
+const createBasicCards$ = Rx.Observable
+  .zip(basicFrontText$, basicBackText$)
+  .map(([front, back]) => new BasicCard(front, back))
+  .do(() => console.log(' - Basic Card was created!\n'));
+  
+//created cloze card stream
+const createClozeCards$ = Rx.Observable
+  .zip(clozeFullText$, clozeClozeText$)
+  .map(([full, cloze]) => new ClozeCard(full, cloze))
+  .do(() => console.log(' - Cloze Card was created!\n'));
+
+//created cards stream
+const createdCards$ = Rx.Observable.merge(createBasicCards$, createClozeCards$)
+  .scan((createdCards, card) => [...createdCards, card], [])
+  .share(); //make cards observable HOT.
+
+//initial two cards
+const initialCards$ = Rx.Observable.of([
+    new BasicCard('Who was the first president of the United States?', 'George Washington'),
+    new ClozeCard('Jupiter is the biggest planet.', 'Jupiter')
+  ]);
+
+// initial cards + created cards
+const totalCards$ = initialCards$
+  .combineLatest(createdCards$.startWith([]))
+  .map(([initialCards, createdCards]) => [...initialCards, ...createdCards]);
+
+// cards display to user
+const showCardList$ = displayCards$.withLatestFrom(totalCards$)
+  .map(([_, cards]) => {
+    return cards.map(card => {
+      if(card instanceof BasicCard) return helper.convertToBasicCardChoices(card);
+      else return helper.convertToClozeCardChoices(card);
+    })
+  })
+  .map(helper.makeCardChoiceQuestion);
+  
+
+//This stream is for checking user's answer for basic/cloze card front/partial text question
+const checkAnswer$ = Rx.Observable
+  .zip(selectedCard$ ,answerForCardProblem$)
+  .map(([card, answer]) => {
+    if (card instanceof BasicCard) return card.back.toLowerCase() === answer.toLowerCase();
+    else return card.cloze.toLowerCase() === answer.toLowerCase();
+  });
+
+
+/**
+ *  Subscribe
+ */
+
+//subscribe answer from inquirer question
 answers$.subscribe(ans => {
   console.log('\n');
   switch (ans.name) {
     case 'action': {
       if (ans.answer === 'create') return questions$.onNext(question.createWhichCard); //ask which card do you want to create
-      
+
       // user selected display
       // we convert both cards streams to observable<Array<question>> and then push this to the question stream
       else return displayCards$.onNext('WOW!');
@@ -65,7 +123,7 @@ answers$.subscribe(ans => {
     //answer for a "What is a 'back' text of Basic card?"
     case 'back': {
       //inquirer do nothing until basic card created in basicCards$.subscribe function
-      return basicBackText$.onNext(ans.answer); 
+      return basicBackText$.onNext(ans.answer);
     }
 
     //answer for a "What is a 'full' text of Cloze card?"
@@ -82,62 +140,13 @@ answers$.subscribe(ans => {
     //answer for a "What is a 'cloze' text of Cloze card?"
     case 'cloze': {
       //inquirer do nothing until cloze card created inside clozeCards$.subscribe function
-      return clozeClozeText$.onNext(ans.answer); 
+      return clozeClozeText$.onNext(ans.answer);
     }
 
     default:
       return;
   }
 });
-
-//created basic card stream
-const createBasicCards$ = Rx.Observable
-  .zip(basicFrontText$, basicBackText$)
-  .map(([front, back]) => new BasicCard(front, back))
-  .do(() => console.log(' - Basic Card was created!\n'));
-  
-//created cloze card stream
-const createClozeCards$ = Rx.Observable
-  .zip(clozeFullText$, clozeClozeText$)
-  .map(([full, cloze]) => new ClozeCard(full, cloze))
-  .do(() => console.log(' - Cloze Card was created!\n'));
-
-//created cards stream
-const createdCards$ = Rx.Observable.merge(createBasicCards$, createClozeCards$)
-  .scan((createdCards, card) => [...createdCards, card], [])
-  .share(); // make 
-
-//initial two cards
-const initialCards$ = Rx.Observable.of([
-    new BasicCard('Who was the first president of the United States?', 'George Washington'),
-    new ClozeCard('Jupiter is the biggest planet.', 'Jupiter')
-  ]);
-
-// initial cards + created cards
-const totalCards$ = initialCards$
-  .combineLatest(createdCards$.startWith([]))
-  .map(([initialCards, createdCards]) => [...initialCards, ...createdCards]);
-
-// cards display to user
-const showCardList$ = displayCards$.withLatestFrom(totalCards$)
-  .map(([_, cards]) => {
-    return cards.map(card => {
-      if(card instanceof BasicCard) return helper.convertToBasicCardChoices(card);
-      else return helper.convertToClozeCardChoices(card);
-    })
-  })
-  .map(helper.makeCardChoiceQuestion);
-  
-
-//This stream is for checking user's answer for basic/cloze card front/partial text question
-const checkAnswer$ = Rx.Observable
-  .zip(selectedCard$ ,answerForCardProblem$)
-  .map(([card, answer]) => {
-    if (card instanceof BasicCard) return card.back.toLowerCase() === answer.toLowerCase();
-    else return card.cloze.toLowerCase() === answer.toLowerCase();
-  });
-
-//Subscribe
 
 createdCards$.subscribe(cards => {
   if(!cards.length) return; //no cards created yet.
