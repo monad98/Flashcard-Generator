@@ -8,7 +8,7 @@ module.exports = {
         value: 'create',
       },
       {
-        name: 'Display cards',
+        name: 'Solve cards problem.',
         value: 'display'
       }]
   },
